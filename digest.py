@@ -13,6 +13,9 @@
 - SENDER_EMAIL (必需)
 - MAX_ITEMS (可选，默认 20)
 - SENDGRID_API_KEY OR SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS
+- OPENAI_API_KEY (可选，用于中英翻译)
+"""
+
 - OPENAI_API_KEY (可选，用于生成中文翻译)
 """
 import os
@@ -28,6 +31,9 @@ import time
 FEEDS = [
     "https://www.nature.com/nature.rss",
     "https://www.sciencemag.org/rss/news_current.xml",
+    "https://export.arxiv.org/rss/cs",
+    "https://export.arxiv.org/rss/astro-ph",
+    "https://export.arxiv.org/rss/q-bio",
     "https://export.arxiv.org/rss/cs",          # 计算机科学总表
     "https://export.arxiv.org/rss/astro-ph",   # 天体物理
     "https://export.arxiv.org/rss/q-bio",      # 量生物
@@ -39,6 +45,8 @@ FEEDS = [
 
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "20"))
 
+
+def parse_date(entry):
 def parse_date(entry):
     # 尝试多种字段
     for f in ("published", "updated", "pubDate"):
@@ -49,6 +57,7 @@ def parse_date(entry):
             except Exception:
                 pass
     return None
+
 
 def fetch_items():
     items = {}
@@ -69,6 +78,10 @@ def fetch_items():
                 "published_dt": published_dt or datetime.min,
                 "source": source
             }
+    sorted_items = sorted(items.values(), key=lambda x: x["published_dt"], reverse=True)
+    return sorted_items[:MAX_ITEMS]
+
+
     # 按 published_dt 排序（降序）
     sorted_items = sorted(items.values(), key=lambda x: x["published_dt"], reverse=True)
     return sorted_items[:MAX_ITEMS]
@@ -86,6 +99,7 @@ def translate_to_chinese(text):
             {"role":"user","content": text}
         ]
         data = {
+            "model": "gpt-4o-mini",
             "model": "gpt-4o-mini",   # 可按需调整
             "messages": prompt,
             "temperature": 0.2,
@@ -97,6 +111,7 @@ def translate_to_chinese(text):
         return resp["choices"][0]["message"]["content"].strip()
     except Exception:
         return None
+
 
 def make_html(items):
     html = []
@@ -122,9 +137,11 @@ def make_html(items):
     html.append("</body></html>")
     return "\n".join(html)
 
+
 def escape_html(s):
     return (s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
             .replace('"',"&quot;").replace("'", "&#39;") if s else "")
+
 
 def send_via_sendgrid(html, subject="每日科技/科学要闻 Daily Science & Tech Digest"):
     key = os.getenv("SENDGRID_API_KEY")
@@ -141,6 +158,7 @@ def send_via_sendgrid(html, subject="每日科技/科学要闻 Daily Science & T
                       json=payload, timeout=30)
     r.raise_for_status()
 
+
 def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech Digest"):
     host = os.getenv("SMTP_HOST")
     port = int(os.getenv("SMTP_PORT", "587"))
@@ -156,6 +174,7 @@ def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech 
     s.login(user, pwd)
     s.sendmail(msg["From"], [msg["To"]], msg.as_string())
     s.quit()
+
 
 if __name__ == "__main__":
     items = fetch_items()
