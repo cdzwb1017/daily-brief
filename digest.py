@@ -23,7 +23,6 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import smtplib
-import time
 
 # 推荐的 RSS 源（可增删）
 FEEDS = [
@@ -74,11 +73,10 @@ def fetch_items():
         for e in getattr(d, "entries", []):
             link = e.get("link") or ""
             title = (e.get("title") or "").strip()
-            source = getattr(d.feed, "get", lambda k, d=k: url)("title") if hasattr(d, "feed") else url
+            source = (d.feed.get("title") if hasattr(d, "feed") and getattr(d, "feed", None) else url) or url
             published_dt = parse_date(e)
             published = published_dt.isoformat() if published_dt else (e.get("published") or e.get("updated") or "")
             key = link or title
-            # 去重：以 link 或标题为键
             items[key] = {
                 "title": title,
                 "link": link,
@@ -91,7 +89,6 @@ def fetch_items():
     return sorted_items[:MAX_ITEMS]
 
 
-# 可选：使用 OpenAI 做翻译（若 OPENAI_API_KEY 存在）
 def translate_to_chinese(text):
     key = os.getenv("OPENAI_API_KEY")
     if not key:
@@ -186,7 +183,6 @@ def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech 
 if __name__ == "__main__":
     items = fetch_items()
     html = make_html(items)
-    # 优先 SendGrid，再 SMTP；两者都未配置则给出提示并退出
     if os.getenv("SENDGRID_API_KEY"):
         try:
             send_via_sendgrid(html)
