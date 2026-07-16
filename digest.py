@@ -16,8 +16,6 @@
 - OPENAI_API_KEY (可选，用于中英翻译)
 """
 
-- OPENAI_API_KEY (可选，用于生成中文翻译)
-"""
 import os
 import feedparser
 import requests
@@ -34,9 +32,6 @@ FEEDS = [
     "https://export.arxiv.org/rss/cs",
     "https://export.arxiv.org/rss/astro-ph",
     "https://export.arxiv.org/rss/q-bio",
-    "https://export.arxiv.org/rss/cs",          # 计算机科学总表
-    "https://export.arxiv.org/rss/astro-ph",   # 天体物理
-    "https://export.arxiv.org/rss/q-bio",      # 量生物
     "https://feeds.feedburner.com/TechCrunch/",
     "https://www.theverge.com/rss/index.xml",
     "https://www.wired.com/feed/rss",
@@ -47,13 +42,22 @@ MAX_ITEMS = int(os.getenv("MAX_ITEMS", "20"))
 
 
 def parse_date(entry):
-def parse_date(entry):
-    # 尝试多种字段
+    # 优先使用 feedparser 提供的结构化时间
+    for pkey in ("published_parsed", "updated_parsed"):
+        t = entry.get(pkey)
+        if t:
+            try:
+                return datetime(*t[:6])
+            except Exception:
+                pass
+    # 回退到解析字符串（保守处理）
     for f in ("published", "updated", "pubDate"):
         val = entry.get(f)
         if val:
             try:
-                return datetime(*feedparser._parse_date(val)[:6])
+                parsed = feedparser._parse_date(val)
+                if parsed:
+                    return datetime(*parsed[:6])
             except Exception:
                 pass
     return None
@@ -62,14 +66,19 @@ def parse_date(entry):
 def fetch_items():
     items = {}
     for url in FEEDS:
-        d = feedparser.parse(url)
-        for e in d.entries:
+        try:
+            d = feedparser.parse(url)
+        except Exception:
+            # 单个源错误不影响整体
+            continue
+        for e in getattr(d, "entries", []):
             link = e.get("link") or ""
             title = (e.get("title") or "").strip()
-            source = d.feed.get("title") or url
+            source = getattr(d.feed, "get", lambda k, d=k: url)("title") if hasattr(d, "feed") else url
             published_dt = parse_date(e)
             published = published_dt.isoformat() if published_dt else (e.get("published") or e.get("updated") or "")
             key = link or title
+            # 去重：以 link 或标题为键
             items[key] = {
                 "title": title,
                 "link": link,
@@ -82,10 +91,6 @@ def fetch_items():
     return sorted_items[:MAX_ITEMS]
 
 
-    # 按 published_dt 排序（降序）
-    sorted_items = sorted(items.values(), key=lambda x: x["published_dt"], reverse=True)
-    return sorted_items[:MAX_ITEMS]
-
 # 可选：使用 OpenAI 做翻译（若 OPENAI_API_KEY 存在）
 def translate_to_chinese(text):
     key = os.getenv("OPENAI_API_KEY")
@@ -95,12 +100,11 @@ def translate_to_chinese(text):
         url = "https://api.openai.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         prompt = [
-            {"role":"system","content":"You are a concise translator that translates English news titles into simplified Chinese. Return only the Chinese translation, no extra commentary."},
-            {"role":"user","content": text}
+            {"role": "system", "content": "You are a concise translator that translates English news titles into simplified Chinese. Return only the Chinese translation, no extra commentary."},
+            {"role": "user", "content": text}
         ]
         data = {
             "model": "gpt-4o-mini",
-            "model": "gpt-4o-mini",   # 可按需调整
             "messages": prompt,
             "temperature": 0.2,
             "max_tokens": 128
@@ -116,7 +120,7 @@ def translate_to_chinese(text):
 def make_html(items):
     html = []
     html.append("<html><body>")
-    html.append("<h2>每日科技/科学要闻（20 条） — Daily Science & Tech Highlights (20 items)</h2>")
+    html.append(f"<h2>每日科技/科学要闻（{len(items)} 条） — Daily Science & Tech Highlights</h2>")
     html.append("<ol>")
     for it in items:
         title_en = it["title"]
@@ -139,8 +143,8 @@ def make_html(items):
 
 
 def escape_html(s):
-    return (s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-            .replace('"',"&quot;").replace("'", "&#39;") if s else "")
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;") if s else "")
 
 
 def send_via_sendgrid(html, subject="每日科技/科学要闻 Daily Science & Tech Digest"):
@@ -148,19 +152,21 @@ def send_via_sendgrid(html, subject="每日科技/科学要闻 Daily Science & T
     if not key:
         raise RuntimeError("SENDGRID_API_KEY not set")
     payload = {
-        "personalizations": [{"to":[{"email": os.getenv("RECIPIENT_EMAIL")}]}],
-        "from": {"email": os.getenv("SENDER_EMAIL")},
+        "personalizations": [{"to": [{"email": os.getenv("RECIPIENT_EMAIL") or ""}]}],
+        "from": {"email": os.getenv("SENDER_EMAIL") or ""},
         "subject": subject,
-        "content": [{"type":"text/html","value": html}]
+        "content": [{"type": "text/html", "value": html}]
     }
     r = requests.post("https://api.sendgrid.com/v3/mail/send",
-                      headers={"Authorization": f"Bearer {key}", "Content-Type":"application/json"},
+                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                       json=payload, timeout=30)
     r.raise_for_status()
 
 
 def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech Digest"):
     host = os.getenv("SMTP_HOST")
+    if not host:
+        raise RuntimeError("SMTP_HOST not set")
     port = int(os.getenv("SMTP_PORT", "587"))
     user = os.getenv("SMTP_USER")
     pwd = os.getenv("SMTP_PASS")
@@ -171,7 +177,8 @@ def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech 
     msg.attach(MIMEText(html, "html"))
     s = smtplib.SMTP(host, port, timeout=30)
     s.starttls()
-    s.login(user, pwd)
+    if user and pwd:
+        s.login(user, pwd)
     s.sendmail(msg["From"], [msg["To"]], msg.as_string())
     s.quit()
 
@@ -179,10 +186,18 @@ def send_via_smtp(html, subject="每日科技/科学要闻 Daily Science & Tech 
 if __name__ == "__main__":
     items = fetch_items()
     html = make_html(items)
+    # 优先 SendGrid，再 SMTP；两者都未配置则给出提示并退出
     if os.getenv("SENDGRID_API_KEY"):
-        send_via_sendgrid(html)
-        print("Sent via SendGrid. Items:", len(items))
+        try:
+            send_via_sendgrid(html)
+            print("Sent via SendGrid. Items:", len(items))
+        except Exception as e:
+            print("SendGrid send failed:", e)
+    elif os.getenv("SMTP_HOST"):
+        try:
+            send_via_smtp(html)
+            print("Sent via SMTP. Items:", len(items))
+        except Exception as e:
+            print("SMTP send failed:", e)
     else:
-        # 采用 SMTP
-        send_via_smtp(html)
-        print("Sent via SMTP. Items:", len(items))
+        print("No mail sending configuration found. Set SENDGRID_API_KEY or SMTP_HOST and SMTP_* secrets.")
