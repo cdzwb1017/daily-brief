@@ -16,6 +16,8 @@
 - OPENAI_API_KEY (可选，用于中英翻译)
 """
 
+- OPENAI_API_KEY (可选，用于生成中文翻译)
+"""
 import os
 import feedparser
 import requests
@@ -23,6 +25,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import smtplib
+import time
 
 # 推荐的 RSS 源（可增删）
 FEEDS = [
@@ -31,6 +34,9 @@ FEEDS = [
     "https://export.arxiv.org/rss/cs",
     "https://export.arxiv.org/rss/astro-ph",
     "https://export.arxiv.org/rss/q-bio",
+    "https://export.arxiv.org/rss/cs",          # 计算机科学总表
+    "https://export.arxiv.org/rss/astro-ph",   # 天体物理
+    "https://export.arxiv.org/rss/q-bio",      # 量生物
     "https://feeds.feedburner.com/TechCrunch/",
     "https://www.theverge.com/rss/index.xml",
     "https://www.wired.com/feed/rss",
@@ -41,6 +47,8 @@ MAX_ITEMS = int(os.getenv("MAX_ITEMS", "20"))
 
 
 def parse_date(entry):
+def parse_date(entry):
+    # 尝试多种字段
     for f in ("published", "updated", "pubDate"):
         val = entry.get(f)
         if val:
@@ -74,6 +82,10 @@ def fetch_items():
     return sorted_items[:MAX_ITEMS]
 
 
+    # 按 published_dt 排序（降序）
+    sorted_items = sorted(items.values(), key=lambda x: x["published_dt"], reverse=True)
+    return sorted_items[:MAX_ITEMS]
+
 # 可选：使用 OpenAI 做翻译（若 OPENAI_API_KEY 存在）
 def translate_to_chinese(text):
     key = os.getenv("OPENAI_API_KEY")
@@ -88,6 +100,7 @@ def translate_to_chinese(text):
         ]
         data = {
             "model": "gpt-4o-mini",
+            "model": "gpt-4o-mini",   # 可按需调整
             "messages": prompt,
             "temperature": 0.2,
             "max_tokens": 128
